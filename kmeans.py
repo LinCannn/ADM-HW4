@@ -180,6 +180,30 @@ class KMeansPlusPlus(MyKMeans):
         # Use the new KMeans++ initialization method
         self.initialize_centroids(data_rdd)
 
-        # Call the parent class's fit method for the rest of the algorithm
-        return super().fit(data_rdd)
-    
+        for iteration in range(self.num_iterations):
+            # Assign each point to the nearest centroid
+            mapped = data_rdd.map(lambda row: self.assign_to_centroid(row))
+
+            # Group points by cluster ID and compute new centroids
+            clustered_points = mapped.groupByKey().mapValues(list)
+            new_centroids = (
+                clustered_points.mapValues(lambda points: np.mean([point[1] for point in points], axis=0))
+                .collectAsMap() # collectAsMap() returns a dictionary of the form {ClusterID: NewCentroid}
+            )
+            updated_centroids = np.array([new_centroids[i] for i in range(self.k)]) # convert the dictionary to an array of centroids
+
+            # Check for convergence
+            centroid_shift = np.linalg.norm(updated_centroids - self.centroids)
+            print(f"Iteration {iteration + 1}: Centroid shift = {centroid_shift:.4f}")
+            inertia = self.compute_inertia(data_rdd)
+            print(f"Inertia: {inertia}")
+            
+            if centroid_shift < self.tolerance:
+                print(f"Converged after {iteration + 1} iterations.")
+                break
+
+            self.centroids = updated_centroids
+
+        # Assign final cluster labels
+        final_clusters = data_rdd.map(lambda row: self.assign_to_centroid(row)).collect()
+        return self.create_cluster_dataframe(final_clusters)
